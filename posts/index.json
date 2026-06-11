@@ -1,0 +1,16 @@
+[
+  {
+    "slug": "hello-world",
+    "title": "Hello, World — A New Beginning",
+    "date": "2026-06-11",
+    "tags": ["personal", "meta"],
+    "excerpt": "Every journey begins with a single word. This is where this one starts."
+  },
+  {
+    "slug": "why-i-started-writing",
+    "title": "Why I Started Writing",
+    "date": "2026-06-10",
+    "tags": ["reflection", "writing"],
+    "excerpt": "Some thoughts on why putting words on a page still matters in an age of notifications and endless feeds."
+  }
+]
