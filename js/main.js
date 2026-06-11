@@ -15,18 +15,18 @@ const state = {
 const $app = document.getElementById('app');
 
 // --- Router ---
-function parseHash() {
-  const hash = location.hash.replace(/^#\/?/, '') || 'home';
-  const parts = hash.split('/').filter(Boolean);
+function parsePath() {
+  const parts = location.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
   return { view: parts[0] || 'home', slug: parts[1] || null };
 }
 
-function navigate(hash) {
-  if (location.hash === hash || (hash === '#/' && location.hash === '')) {
+function navigate(path) {
+  if (location.pathname === path) {
     handleRoute();
     return;
   }
-  location.hash = hash;
+  history.pushState(null, '', path);
+  handleRoute();
 }
 
 // --- Helpers ---
@@ -124,7 +124,7 @@ function renderHomeView(posts) {
           : '<p style="color: var(--text-muted);">No posts published yet.</p>'
         }
         ${posts.length > 5
-          ? `<div style="margin-top: 1rem;"><a href="#/blog" class="view-all-link">View all articles →</a></div>`
+          ? `<div style="margin-top: 1rem;"><a href="/blog" class="view-all-link">View all articles →</a></div>`
           : ''
         }
       </section>
@@ -156,7 +156,7 @@ function renderPostItem(post) {
   const tags = (post.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('');
   return `
     <li class="post-item">
-      <a href="#/post/${encodeURIComponent(post.slug)}">
+      <a href="/post/${encodeURIComponent(post.slug)}">
         <time class="post-date" datetime="${post.date || ''}">${formatDate(post.date)}</time>
         <div>
           <span class="post-title">${escapeHtml(post.title)}</span>
@@ -205,7 +205,7 @@ async function renderPostView(slug) {
           ${html}
         </div>
         <nav class="post-nav" aria-label="Post navigation">
-          <a href="#/blog" class="nav-prev">← Back to blog</a>
+          <a href="/blog" class="nav-prev">← Back to blog</a>
         </nav>
       </div>
     </article>
@@ -254,7 +254,7 @@ function updateActiveNav(view) {
 
 // --- Route Handler ---
 async function handleRoute() {
-  const { view, slug } = parseHash();
+  const { view, slug } = parsePath();
 
   // Prevent re-rendering the same view
   if (state.currentView === view && !slug) return;
@@ -266,7 +266,7 @@ async function handleRoute() {
   updateActiveNav(view === 'post' ? 'blog' : view);
 
   if (view === 'post' && !slug) {
-    navigate('#/blog');
+    navigate('/blog');
     return;
   }
 
@@ -293,7 +293,7 @@ async function handleRoute() {
         renderAboutView();
         break;
       default:
-        navigate('#/');
+        navigate('/');
         return;
     }
     state.currentView = view;
@@ -305,12 +305,18 @@ async function handleRoute() {
 
 // --- Init ---
 function init() {
-  window.addEventListener('hashchange', handleRoute);
+  window.addEventListener('popstate', handleRoute);
 
-  // Handle initial load — no hash or empty hash → go home
-  if (!location.hash || location.hash === '#') {
-    history.replaceState(null, '', '#/');
+  if (location.hash.startsWith('#/')) {
+    history.replaceState(null, '', location.hash.replace(/^#/, '') || '/');
   }
+
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a');
+    if (!link || link.target || link.origin !== location.origin) return;
+    event.preventDefault();
+    navigate(link.pathname);
+  });
 
   handleRoute();
 }
