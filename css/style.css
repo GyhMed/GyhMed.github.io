@@ -566,6 +566,31 @@ img {
   color: var(--text-primary);
 }
 
+.footer-records {
+  max-width: var(--content-wide);
+  margin: 0.75rem auto 0;
+  padding: 0 var(--gap-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+  text-align: center;
+  font-family: var(--font-heading);
+  font-size: clamp(0.5625rem, 2.7vw, 0.75rem);
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.footer-records a {
+  color: inherit;
+}
+
+.footer-records a:hover {
+  color: var(--text-secondary);
+}
+
 /* --- View Transitions --- */
 .view {
   animation: fadeUp 0.4s var(--ease-out) both;
