@@ -169,7 +169,7 @@ img {
   transition: top 200ms var(--ease-out);
 }
 
-.skip-link:focus {
+.skip-link:focus-visible {
   top: 0;
   color: #fff;
 }
