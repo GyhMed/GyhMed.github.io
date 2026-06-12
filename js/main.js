@@ -14,6 +14,11 @@ const state = {
 
 const $app = document.getElementById('app');
 
+// --- Reduced Motion Check ---
+function prefersReducedMotion() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 // --- Router ---
 function parsePath() {
   const parts = location.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
@@ -40,6 +45,11 @@ function formatDate(dateStr) {
   if (!dateStr) return '';
   const [y, m, d] = dateStr.split('-');
   return `${y}.${m}.${d}`;
+}
+
+function estimateReadingTime(md) {
+  const words = md.split(/\s+/).length;
+  return Math.max(1, Math.ceil(words / 200));
 }
 
 // --- Post Loading ---
@@ -77,30 +87,108 @@ function getPostMeta(slug) {
   return state.posts.find(p => p.slug === slug) || null;
 }
 
+// --- Reading Progress Bar ---
+let $progressBar = null;
+
+function initProgressBar() {
+  $progressBar = document.createElement('div');
+  $progressBar.className = 'reading-progress';
+  $progressBar.setAttribute('aria-hidden', 'true');
+  document.body.appendChild($progressBar);
+
+  let ticking = false;
+  window.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      updateProgressBar();
+      ticking = false;
+    });
+  }, { passive: true });
+}
+
+function updateProgressBar() {
+  if (!$progressBar || state.currentView !== 'post') {
+    if ($progressBar) $progressBar.style.width = '0%';
+    return;
+  }
+  const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+  const scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+  if (scrollHeight <= 0) {
+    $progressBar.style.width = '0%';
+    return;
+  }
+  const pct = Math.min(100, (scrollTop / scrollHeight) * 100);
+  $progressBar.style.width = pct + '%';
+}
+
+function showProgressBar(show) {
+  if (!$progressBar) return;
+  $progressBar.style.display = show ? '' : 'none';
+  if (!show) $progressBar.style.width = '0%';
+}
+
+// --- Scroll Reveal (Intersection Observer) ---
+let revealObserver = null;
+
+function initScrollReveal() {
+  if (prefersReducedMotion()) return;
+
+  if (revealObserver) revealObserver.disconnect();
+
+  revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        revealObserver.unobserve(entry.target);
+      }
+    });
+  }, {
+    threshold: 0.1,
+    rootMargin: '0px 0px -40px 0px',
+  });
+}
+
+function observeRevealElements() {
+  if (prefersReducedMotion() || !revealObserver) return;
+
+  const selectors = '.post-item, .section-heading, .about-page .bio p';
+  document.querySelectorAll(selectors).forEach((el, i) => {
+    el.classList.add('reveal');
+    if (el.classList.contains('post-item')) {
+      el.style.transitionDelay = Math.min(i * 60, 300) + 'ms';
+    }
+    revealObserver.observe(el);
+  });
+}
+
 // --- View Rendering ---
 function renderLoading() {
+  $app.setAttribute('aria-busy', 'true');
   $app.innerHTML = '<div class="view"><div class="state-loading">Loading…</div></div>';
 }
 
 function renderError(msg) {
+  $app.setAttribute('aria-busy', 'false');
   $app.innerHTML = `<div class="view"><div class="state-error">${escapeHtml(msg)}</div></div>`;
 }
 
 function renderEmpty() {
+  $app.setAttribute('aria-busy', 'false');
   $app.innerHTML = '<div class="view"><div class="state-empty">No posts yet. Check back soon.</div></div>';
 }
 
 // --- Home View ---
 function renderHomeView(posts) {
   const recent = posts.slice(0, 5);
-  const postItems = recent.map(p => renderPostItem(p)).join('');
+  const postItems = recent.map((p, i) => renderPostItem(p, i)).join('');
 
   $app.innerHTML = `
     <div class="view">
-      <section class="hero">
+      <section class="hero" aria-labelledby="hero-heading">
         <div class="container-wide">
           <div class="hero-content">
-            <h1>
+            <h1 id="hero-heading">
               A quiet corner<br>
               for <span class="highlight">thoughts</span>.
             </h1>
@@ -130,11 +218,12 @@ function renderHomeView(posts) {
       </section>
     </div>
   `;
+  onRenderComplete();
 }
 
 // --- Blog List View ---
 function renderBlogView(posts) {
-  const postItems = posts.map(p => renderPostItem(p)).join('');
+  const postItems = posts.map((p, i) => renderPostItem(p, i)).join('');
 
   $app.innerHTML = `
     <div class="view">
@@ -150,13 +239,14 @@ function renderBlogView(posts) {
       </div>
     </div>
   `;
+  onRenderComplete();
 }
 
-function renderPostItem(post) {
+function renderPostItem(post, index) {
   const tags = (post.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('');
   return `
     <li class="post-item">
-      <a href="/post/${encodeURIComponent(post.slug)}">
+      <a href="/post/${encodeURIComponent(post.slug)}" aria-label="Read: ${escapeHtml(post.title)}">
         <time class="post-date" datetime="${post.date || ''}">${formatDate(post.date)}</time>
         <div>
           <span class="post-title">${escapeHtml(post.title)}</span>
@@ -205,13 +295,14 @@ async function renderPostView(slug) {
           ${html}
         </div>
         <nav class="post-nav" aria-label="Post navigation">
-          <a href="/blog" class="nav-prev">← Back to blog</a>
+          <a href="/blog" class="nav-prev">&larr; Back to blog</a>
         </nav>
       </div>
     </article>
   `;
 
   document.title = `${title} — GyhMed`;
+  onRenderComplete();
 }
 
 // --- About View ---
@@ -241,6 +332,17 @@ function renderAboutView() {
       </div>
     </div>
   `;
+  onRenderComplete();
+}
+
+// --- Post-Render Hook ---
+function onRenderComplete() {
+  $app.setAttribute('aria-busy', 'false');
+  initScrollReveal();
+  observeRevealElements();
+
+  // Show/hide reading progress bar
+  showProgressBar(state.currentView === 'post');
 }
 
 // --- Nav Active State ---
@@ -270,6 +372,12 @@ async function handleRoute() {
     return;
   }
 
+  // Reset progress bar on navigation
+  showProgressBar(false);
+
+  // Set current view early so onRenderComplete can check it
+  state.currentView = view;
+
   renderLoading();
 
   try {
@@ -296,7 +404,9 @@ async function handleRoute() {
         navigate('/');
         return;
     }
-    state.currentView = view;
+
+    // Scroll to top after route change
+    window.scrollTo({ top: 0, behavior: 'instant' });
   } catch (err) {
     console.error('Render error:', err);
     renderError('Something went wrong. Please try again.');
@@ -317,6 +427,9 @@ function init() {
     event.preventDefault();
     navigate(link.pathname);
   });
+
+  // Initialize reading progress bar
+  initProgressBar();
 
   handleRoute();
 }
