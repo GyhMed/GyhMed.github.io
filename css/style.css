@@ -591,6 +591,21 @@ img {
   color: var(--text-secondary);
 }
 
+.gongan-record {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  vertical-align: middle;
+}
+
+.gongan-record img {
+  display: block;
+  width: 16px;
+  height: 17px;
+  border-radius: 0;
+  flex: 0 0 auto;
+}
+
 /* --- View Transitions --- */
 .view {
   animation: fadeUp 0.4s var(--ease-out) both;
