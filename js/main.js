@@ -616,6 +616,7 @@ function renderAboutView() {
             <div class="about-brand-info">
               <span class="about-brand-name">GyhMed</span>
               <span class="about-brand-tagline">Writer &middot; Thinker &middot; Explorer</span>
+              <span class="about-brand-tagline">Contact: <a href="mailto:admin@gyhmed.com">admin@gyhmed.com</a></span>
             </div>
           </div>
 
