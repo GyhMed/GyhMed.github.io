@@ -15,8 +15,8 @@ const state = {
 };
 
 // --- GoatCounter Configuration ---
-// Replace 'YOUR_CODE' with your actual GoatCounter site code
-const GC_CODE = 'YOUR_CODE';
+// Replace 'gyhmed' with your actual GoatCounter site code
+const GC_CODE = 'gyhmed';
 const GC_BASE = `https://${GC_CODE}.goatcounter.com`;
 
 const $app = document.getElementById('app');
@@ -427,8 +427,6 @@ function setPostJsonLd(meta, readingTime) {
 // PAGE VIEW COUNTER (GoatCounter)
 // =============================================
 async function fetchAndDisplayViewCount(path) {
-  if (GC_CODE === 'YOUR_CODE') return; // Skip if not configured
-
   const el = document.querySelector('.post-view-count');
   if (!el) return;
 
