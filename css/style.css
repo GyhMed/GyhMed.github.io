@@ -614,6 +614,12 @@ img {
   letter-spacing: 0.02em;
 }
 
+.post-view-count {
+  background: var(--accent-surface);
+  color: var(--accent-hover);
+  transition: opacity var(--duration-snappy) var(--ease-out);
+}
+
 .post-reading-time {
   font-family: var(--font-heading);
   font-size: 0.75rem;

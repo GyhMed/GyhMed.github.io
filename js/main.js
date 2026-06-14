@@ -14,6 +14,11 @@ const state = {
   menuOpen: false,
 };
 
+// --- GoatCounter Configuration ---
+// Replace 'YOUR_CODE' with your actual GoatCounter site code
+const GC_CODE = 'YOUR_CODE';
+const GC_BASE = `https://${GC_CODE}.goatcounter.com`;
+
 const $app = document.getElementById('app');
 
 // --- Reduced Motion Check ---
@@ -419,6 +424,30 @@ function setPostJsonLd(meta, readingTime) {
 }
 
 // =============================================
+// PAGE VIEW COUNTER (GoatCounter)
+// =============================================
+async function fetchAndDisplayViewCount(path) {
+  if (GC_CODE === 'YOUR_CODE') return; // Skip if not configured
+
+  const el = document.querySelector('.post-view-count');
+  if (!el) return;
+
+  try {
+    const res = await fetch(
+      `${GC_BASE}/count/total?path=${encodeURIComponent(path)}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const count = data.count ?? 0;
+      el.querySelector('.view-count-num').textContent = count;
+      el.style.display = '';
+    }
+  } catch {
+    // Silently fail — don't break the page if counter is unreachable
+  }
+}
+
+// =============================================
 // VIEW RENDERING
 // =============================================
 function renderLoading() {
@@ -532,6 +561,7 @@ async function renderPostView(slug) {
   const tags = meta
     ? (meta.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('')
     : '';
+  const viewCountHtml = `<span class="post-view-count post-tag" style="display:none;">👀 <span class="view-count-num">0</span> 次</span>`;
   const readingTime = estimateReadingTime(md);
   const { prev, next } = getAdjacentPosts(slug);
 
@@ -582,7 +612,7 @@ async function renderPostView(slug) {
               <span>${readingTime} min read</span>
             </div>
             <h1>${title}</h1>
-            ${tags ? `<div class="post-tags">${tags}</div>` : ''}
+            ${tags ? `<div class="post-tags">${tags}${viewCountHtml}</div>` : `<div class="post-tags">${viewCountHtml}</div>`}
           </header>
           <div class="post-body">
             ${html}
@@ -600,6 +630,9 @@ async function renderPostView(slug) {
   setPostJsonLd(meta, readingTime);
 
   onRenderComplete();
+
+  // Fetch and display view count (async, non-blocking)
+  fetchAndDisplayViewCount(`/post/${slug}`);
 }
 
 // --- About View ---
