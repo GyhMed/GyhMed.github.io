@@ -14,10 +14,8 @@ const state = {
   menuOpen: false,
 };
 
-// --- GoatCounter Configuration ---
-// Replace 'gyhmed' with your actual GoatCounter site code
-const GC_CODE = 'gyhmed';
-const GC_BASE = `https://${GC_CODE}.goatcounter.com`;
+// --- GoatCounter is used for analytics (tracking script in HTML) ---
+// Page view count display is handled by Busuanzi JSONP (see fetchAndDisplayViewCount)
 
 const $app = document.getElementById('app');
 
@@ -424,25 +422,49 @@ function setPostJsonLd(meta, readingTime) {
 }
 
 // =============================================
-// PAGE VIEW COUNTER (GoatCounter)
+// PAGE VIEW COUNTER (Busuanzi JSONP)
 // =============================================
-async function fetchAndDisplayViewCount(path) {
+function fetchAndDisplayViewCount(path) {
   const el = document.querySelector('.post-view-count');
   if (!el) return;
 
-  try {
-    const res = await fetch(
-      `${GC_BASE}/count/total?path=${encodeURIComponent(path)}`
-    );
-    if (res.ok) {
-      const data = await res.json();
-      const count = data.count ?? 0;
+  const cbName = '_bsz_cb_' + Date.now();
+  const pageUrl = 'https://gyhmed.com' + path;
+
+  // JSONP callback
+  window[cbName] = function(data) {
+    try {
+      // busuanzi returns { page: { pv: N, uv: N }, site: { pv: N, uv: N } }
+      // or similar structure — try to extract page-level pv first, fall back to site pv
+      let count = 0;
+      if (data && typeof data === 'object') {
+        if (data.page && typeof data.page.pv !== 'undefined') {
+          count = parseInt(data.page.pv, 10) || 0;
+        } else if (data.pv !== 'undefined') {
+          count = parseInt(data.pv, 10) || 0;
+        }
+      }
+      // If we got a single number (some busuanzi versions)
+      if (typeof data === 'number') count = data;
+
       el.querySelector('.view-count-num').textContent = count;
       el.style.display = '';
-    }
-  } catch {
-    // Silently fail — don't break the page if counter is unreachable
-  }
+    } catch {}
+
+    // Cleanup
+    delete window[cbName];
+    const s = document.getElementById('busuanzi_cb');
+    if (s) s.remove();
+  };
+
+  const script = document.createElement('script');
+  script.id = 'busuanzi_cb';
+  script.src = `//busuanzi.ibruce.info/busuanzi?jsonpCallback=${cbName}&pageurl=${encodeURIComponent(pageUrl)}&referer=${encodeURIComponent(document.referrer)}`;
+  script.onerror = () => {
+    delete window[cbName];
+    script.remove();
+  };
+  document.head.appendChild(script);
 }
 
 // =============================================
