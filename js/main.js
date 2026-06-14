@@ -422,49 +422,51 @@ function setPostJsonLd(meta, readingTime) {
 }
 
 // =============================================
-// PAGE VIEW COUNTER (Busuanzi JSONP)
+// PAGE VIEW COUNTER (Busuanzi)
 // =============================================
 function fetchAndDisplayViewCount(path) {
   const el = document.querySelector('.post-view-count');
   if (!el) return;
 
-  const cbName = '_bsz_cb_' + Date.now();
   const pageUrl = 'https://gyhmed.com' + path;
+  const ref = document.referrer || '';
 
-  // JSONP callback
-  window[cbName] = function(data) {
-    try {
-      // busuanzi returns { page: { pv: N, uv: N }, site: { pv: N, uv: N } }
-      // or similar structure — try to extract page-level pv first, fall back to site pv
-      let count = 0;
-      if (data && typeof data === 'object') {
-        if (data.page && typeof data.page.pv !== 'undefined') {
-          count = parseInt(data.page.pv, 10) || 0;
-        } else if (data.pv !== 'undefined') {
-          count = parseInt(data.pv, 10) || 0;
+  // Step 1: Record the visit (tracking hit)
+  const hit = new Image();
+  hit.src = `//busuanzi.ibruce.info/busuanzi?jsonpCallback=hit&pageurl=${encodeURIComponent(pageUrl)}&referer=${encodeURIComponent(ref)}`;
+
+  // Step 2: After a short delay, fetch the updated count via JSONP
+  setTimeout(() => {
+    const cbName = '_bsz_cb_' + Date.now();
+    window[cbName] = function(data) {
+      try {
+        let count = 0;
+        if (data && typeof data === 'object') {
+          // Try various response structures
+          if (data.page && data.page.pv != null) count = +data.page.pv;
+          else if (data.page_pv != null) count = +data.page_pv;
+          else if (data.pv != null) count = +data.pv;
         }
-      }
-      // If we got a single number (some busuanzi versions)
-      if (typeof data === 'number') count = data;
+        if (typeof data === 'number') count = data;
 
-      el.querySelector('.view-count-num').textContent = count;
-      el.style.display = '';
-    } catch {}
+        el.querySelector('.view-count-num').textContent = count;
+        el.style.display = '';
+      } catch {}
 
-    // Cleanup
-    delete window[cbName];
-    const s = document.getElementById('busuanzi_cb');
-    if (s) s.remove();
-  };
+      delete window[cbName];
+      const s = document.getElementById('busuanzi_cb');
+      if (s) s.remove();
+    };
 
-  const script = document.createElement('script');
-  script.id = 'busuanzi_cb';
-  script.src = `//busuanzi.ibruce.info/busuanzi?jsonpCallback=${cbName}&pageurl=${encodeURIComponent(pageUrl)}&referer=${encodeURIComponent(document.referrer)}`;
-  script.onerror = () => {
-    delete window[cbName];
-    script.remove();
-  };
-  document.head.appendChild(script);
+    const script = document.createElement('script');
+    script.id = 'busuanzi_cb';
+    script.src = `//busuanzi.ibruce.info/busuanzi?jsonpCallback=${cbName}&pageurl=${encodeURIComponent(pageUrl)}&referer=${encodeURIComponent(ref)}`;
+    script.onerror = () => {
+      delete window[cbName];
+      script.remove();
+    };
+    document.head.appendChild(script);
+  }, 800);
 }
 
 // =============================================
