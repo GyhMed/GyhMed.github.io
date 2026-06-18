@@ -8,8 +8,11 @@
 const state = {
   posts: [],
   postsLoaded: false,
+  notes: [],
+  notesLoaded: false,
   currentView: null,
   postCache: new Map(),
+  noteCache: new Map(),
   theme: null,
   menuOpen: false,
 };
@@ -166,6 +169,52 @@ function getAdjacentPosts(slug) {
 }
 
 // =============================================
+// NOTES LOADING
+// =============================================
+async function loadNotes(force = false) {
+  if (state.notesLoaded && !force) return state.notes;
+  try {
+    const res = await fetch('/notes/index.json');
+    if (!res.ok) throw new Error(`Failed to load notes index (${res.status})`);
+    state.notes = await res.json();
+    state.notes.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    state.notesLoaded = true;
+    return state.notes;
+  } catch (err) {
+    console.warn('Could not load notes:', err.message);
+    state.notes = [];
+    state.notesLoaded = true;
+    return [];
+  }
+}
+
+async function loadNoteContent(slug) {
+  if (state.noteCache.has(slug)) return state.noteCache.get(slug);
+  try {
+    const res = await fetch(`/notes/${encodeURIComponent(slug)}.md`);
+    if (!res.ok) throw new Error(`Note not found (${res.status})`);
+    const md = await res.text();
+    state.noteCache.set(slug, md);
+    return md;
+  } catch (err) {
+    throw err;
+  }
+}
+
+function getNoteMeta(slug) {
+  return state.notes.find(n => n.slug === slug) || null;
+}
+
+function getAdjacentNotes(slug) {
+  const idx = state.notes.findIndex(n => n.slug === slug);
+  if (idx === -1) return { prev: null, next: null };
+  return {
+    prev: idx < state.notes.length - 1 ? state.notes[idx + 1] : null,
+    next: idx > 0 ? state.notes[idx - 1] : null,
+  };
+}
+
+// =============================================
 // READING PROGRESS BAR
 // =============================================
 let $progressBar = null;
@@ -188,7 +237,7 @@ function initProgressBar() {
 }
 
 function updateProgressBar() {
-  if (!$progressBar || state.currentView !== 'post') {
+  if (!$progressBar || (state.currentView !== 'post' && state.currentView !== 'note')) {
     if ($progressBar) $progressBar.style.width = '0%';
     return;
   }
@@ -418,6 +467,22 @@ function setPostJsonLd(meta, readingTime) {
     description: meta.excerpt || '',
     keywords: (meta.tags || []).join(', '),
     timeRequired: `PT${readingTime}M`,
+  });
+}
+
+function setNoteJsonLd(meta, readingTime) {
+  if (!meta) return;
+  injectJsonLd({
+    '@context': 'https://schema.org',
+    '@type': 'ScholarlyArticle',
+    headline: meta.title,
+    datePublished: meta.date,
+    author: { '@type': 'Person', name: 'GyhMed' },
+    url: `https://gyhmed.com/note/${meta.slug}`,
+    description: meta.excerpt || '',
+    keywords: (meta.tags || []).join(', '),
+    timeRequired: `PT${readingTime}M`,
+    isPartOf: { '@type': 'CollectionPage', name: 'GyhMed Notes' },
   });
 }
 
@@ -697,6 +762,131 @@ function renderAboutView() {
   onRenderComplete();
 }
 
+// --- Notes List View ---
+function renderNotesView(notes) {
+  const noteItems = notes.map((n, i) => renderNoteItem(n, i)).join('');
+
+  $app.innerHTML = `
+    <div class="view">
+      <div class="container-wide blog-header">
+        <h1>Notes</h1>
+        <p>Reading notes and literature study logs.</p>
+        ${notes.length > 0
+          ? `<ul class="post-list">${noteItems}</ul>`
+          : '<p style="color: var(--text-muted);">No notes published yet.</p>'
+        }
+      </div>
+    </div>
+  `;
+  onRenderComplete();
+}
+
+function renderNoteItem(note, index) {
+  const tags = (note.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('');
+  const venueLabel = note.venue ? `${note.venue}'${note.year || ''}` : '';
+  return `
+    <li class="post-item">
+      <a href="/note/${encodeURIComponent(note.slug)}" aria-label="Read: ${escapeHtml(note.title)}">
+        <time class="post-date" datetime="${note.date || ''}">${venueLabel}</time>
+        <div>
+          <span class="post-title">${escapeHtml(note.title)}</span>
+          ${note.excerpt ? `<div class="post-excerpt">${escapeHtml(note.excerpt)}</div>` : ''}
+          ${tags ? `<div class="post-meta-footer">${tags}</div>` : ''}
+        </div>
+      </a>
+    </li>
+  `;
+}
+
+// --- Single Note View ---
+async function renderNoteView(slug) {
+  const meta = getNoteMeta(slug);
+  let md;
+  try {
+    md = await loadNoteContent(slug);
+  } catch (err) {
+    renderError('Note not found.');
+    return;
+  }
+
+  const title = meta ? escapeHtml(meta.title) : 'Untitled';
+  const venueYear = meta ? `${escapeHtml(meta.venue || '')}'${meta.year || ''}` : '';
+  const tags = meta
+    ? (meta.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('')
+    : '';
+  const viewCountHtml = `<span class="post-view-count post-tag" style="display:none;">👀 <span class="view-count-num">0</span> 次</span>`;
+  const readingTime = estimateReadingTime(md);
+  const { prev, next } = getAdjacentNotes(slug);
+
+  let html;
+  try {
+    if (typeof marked !== 'undefined') {
+      html = marked.parse(md);
+    } else {
+      html = fallbackRender(md);
+    }
+  } catch (e) {
+    html = `<pre>${escapeHtml(md)}</pre>`;
+  }
+
+  // Build prev/next nav
+  let navHtml = '<nav class="post-nav" aria-label="Note navigation">';
+  if (prev) {
+    navHtml += `
+      <a href="/note/${encodeURIComponent(prev.slug)}" class="nav-prev">
+        <span class="nav-label">&larr; Previous</span>
+        <span class="nav-title">${escapeHtml(prev.title)}</span>
+      </a>`;
+  } else {
+    navHtml += `
+      <a href="/notes" class="nav-prev">
+        <span class="nav-label">&larr; Back to</span>
+        <span class="nav-title">All notes</span>
+      </a>`;
+  }
+  if (next) {
+    navHtml += `
+      <a href="/note/${encodeURIComponent(next.slug)}" class="nav-next">
+        <span class="nav-label">Next &rarr;</span>
+        <span class="nav-title">${escapeHtml(next.title)}</span>
+      </a>`;
+  }
+  navHtml += '</nav>';
+
+  $app.innerHTML = `
+    <article class="view post-page">
+      <div class="post-with-toc">
+        <div class="post-main">
+          <header class="post-header">
+            <div class="post-header-meta">
+              ${venueYear ? `<span>${venueYear}</span>` : ''}
+              ${venueYear ? '<span class="meta-divider"></span>' : ''}
+              <span>${readingTime} min read</span>
+            </div>
+            <h1>${title}</h1>
+            ${tags ? `<div class="post-tags">${tags}${viewCountHtml}</div>` : `<div class="post-tags">${viewCountHtml}</div>`}
+          </header>
+          <div class="post-body">
+            ${html}
+          </div>
+          ${navHtml}
+        </div>
+        <aside class="toc-aside" aria-label="Table of contents"></aside>
+      </div>
+    </article>
+  `;
+
+  document.title = `${title} — GyhMed`;
+
+  // JSON-LD for this note
+  setNoteJsonLd(meta, readingTime);
+
+  onRenderComplete();
+
+  // Fetch and display view count (async, non-blocking)
+  fetchAndDisplayViewCount(`/note/${slug}`);
+}
+
 // =============================================
 // MARKED.JS FALLBACK RENDERER
 // =============================================
@@ -740,8 +930,8 @@ function onRenderComplete() {
   initScrollReveal();
   observeRevealElements();
 
-  // Post-specific enhancements
-  if (state.currentView === 'post') {
+  // Post and note-specific enhancements
+  if (state.currentView === 'post' || state.currentView === 'note') {
     showProgressBar(true);
     injectCopyButtons();
     initLightbox();
@@ -749,8 +939,8 @@ function onRenderComplete() {
     applySyntaxHighlight();
   } else {
     showProgressBar(false);
-    if (state.currentView !== 'post') {
-      injectJsonLd(null); // Clear post JSON-LD
+    if (state.currentView !== 'post' && state.currentView !== 'note') {
+      injectJsonLd(null); // Clear post/note JSON-LD
     }
   }
 }
@@ -778,14 +968,24 @@ async function handleRoute() {
   // Close mobile menu on navigation
   closeMenu();
 
-  view === 'home'
-    ? document.title = 'GyhMed — A quiet corner for thoughts'
-    : document.title = `GyhMed — ${view.charAt(0).toUpperCase() + view.slice(1)}`;
+  // Set document title
+  if (view === 'home') {
+    document.title = 'GyhMed — A quiet corner for thoughts';
+  } else if (view === 'notes') {
+    document.title = 'GyhMed — Notes';
+  } else {
+    document.title = `GyhMed — ${view.charAt(0).toUpperCase() + view.slice(1)}`;
+  }
 
-  updateActiveNav(view === 'post' ? 'blog' : view);
+  updateActiveNav(view === 'post' ? 'blog' : view === 'note' ? 'notes' : view);
 
   if (view === 'post' && !slug) {
     navigate('/blog');
+    return;
+  }
+
+  if (view === 'note' && !slug) {
+    navigate('/notes');
     return;
   }
 
@@ -817,6 +1017,17 @@ async function handleRoute() {
       case 'post': {
         await loadPosts();
         await renderPostView(slug);
+        break;
+      }
+      case 'notes': {
+        const notes = await loadNotes();
+        renderNotesView(notes);
+        setSiteJsonLd();
+        break;
+      }
+      case 'note': {
+        await loadNotes();
+        await renderNoteView(slug);
         break;
       }
       case 'about':
