@@ -993,45 +993,6 @@ img {
   color: var(--text-primary);
 }
 
-.footer-records {
-  max-width: var(--content-wide);
-  margin: 0.75rem auto 0;
-  padding: 0 var(--gap-lg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  flex-wrap: nowrap;
-  text-align: center;
-  font-family: var(--font-heading);
-  font-size: 0.8125rem;
-  line-height: 1.5;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.footer-records a {
-  color: inherit;
-}
-
-.footer-records a:hover {
-  color: var(--text-secondary);
-}
-
-.gongan-record {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  vertical-align: middle;
-}
-
-.gongan-record img {
-  display: block;
-  width: 10px !important;
-  height: 11px !important;
-  border-radius: 0;
-  flex: 0 0 auto;
-}
 
 /* --- View Transitions --- */
 .view {
