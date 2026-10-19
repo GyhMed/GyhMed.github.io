@@ -1,0 +1,15 @@
+{
+  "name": "gyhmed-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node build.mjs --serve"
+  },
+  "devDependencies": {
+    "marked": "^12.0.2"
+  },
+  "dependencies": {
+    "highlight.js": "^11.12.0"
+  }
+}

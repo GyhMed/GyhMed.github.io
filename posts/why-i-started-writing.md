@@ -1,3 +1,11 @@
+---
+title: "Why I Started Writing"
+date: "2026-06-10"
+section: "writing"
+lang: "en"
+tags: ["reflection", "writing"]
+excerpt: "Some thoughts on why putting words on a page still matters in an age of notifications and endless feeds."
+---
 # Why I Started Writing
 
 It's a strange thing, writing in public. You're exposing a part of yourself that's usually kept private — the messy, unfinished process of thinking. So why do it?

@@ -1,0 +1,14 @@
+文字内容许可 / Content license
+
+本仓库中 posts/、notes/ 与 about.md 下的全部文字内容，采用
+Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+(CC BY-NC-SA 4.0) 授权。
+
+完整条款见：https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.zh-hans
+
+摘要 / In short:
+  署名 — 你再分发时必须注明作者与来源。
+  非商业性使用 — 不得将这些内容用于商业目的。
+  相同方式共享 — 修改后必须采用相同许可发布。
+
+代码（build.mjs、css/、js/ 等工程文件）不受本文件约束，采用 MIT，见 LICENSE。

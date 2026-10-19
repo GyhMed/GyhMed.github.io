@@ -35,7 +35,8 @@
 
   /* Typography */
   --font-heading: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-body: 'Georgia', 'Times New Roman', 'Noto Serif SC', serif;
+  /* 中文衬线走系统字体：CJK 网络字体动辄数 MB，且 fonts.googleapis.com 在大陆不可达 */
+  --font-body: 'Georgia', 'Times New Roman', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
 
   /* Layout */
@@ -1207,6 +1208,12 @@ img {
   body {
     background: white;
     color: black;
+  }
+  /* 滚动揭示用 JS 才补 .visible；打印时不滚动就会留下整段空白，这里强制显形 */
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
   }
 }
 

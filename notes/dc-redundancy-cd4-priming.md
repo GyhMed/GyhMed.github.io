@@ -1,3 +1,13 @@
+---
+title: "DC Redundancy Enables CD4+ T Cell Priming in PDAC"
+date: "2026-07-13"
+section: "notes"
+lang: "zh-CN"
+venue: "Cancer Cell"
+year: "2026"
+tags: ["PDAC", "cDC2", "CD4+ T cells", "IFNγ", "STING agonist", "immunotherapy"]
+excerpt: "cDC2-CD4+ T 细胞-IFNγ 轴可独立于 CD8+ T 细胞/MHC-I 清除免疫原性差的 PDAC，三联疗法 (STING + anti-PD-1 + anti-CTLA-4) 实现持久缓解。"
+---
 # Dendritic Cell Redundancy Enables Priming of Anti-tumor CD4+ T Cells in Pancreatic Cancer
 
 ## Metadata

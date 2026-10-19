@@ -1,3 +1,11 @@
+---
+title: "Hello, World — A New Beginning"
+date: "2026-06-11"
+section: "writing"
+lang: "en"
+tags: ["personal", "meta"]
+excerpt: "Every journey begins with a single word. This is where this one starts."
+---
 # Hello, World — A New Beginning
 
 This is the first post on this little corner of the internet.

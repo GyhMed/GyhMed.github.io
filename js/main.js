@@ -1,1090 +1,208 @@
+/* GyhMed — 运行时渐进增强
+ *
+ * 这个脚本只负责交互增强，不负责渲染。
+ * 所有正文在构建期已渲染进 HTML，因此：
+ *   · 不 fetch 任何 .md，不加载 marked.js，不加载 highlight.js
+ *   · 不引用 fonts.googleapis.com / jsdelivr
+ *   · 禁用 JavaScript 后，页面内容依然完整可读
+ * 路由与页面渲染已从运行时移除（见 build.mjs）。
+ */
 'use strict';
 
-/* =============================================
-   GyhMed Blog — SPA Engine (Enhanced)
-   ============================================= */
+const THEME_KEY = 'gyhmed-theme';
 
-// --- State ---
-const state = {
-  posts: [],
-  postsLoaded: false,
-  notes: [],
-  notesLoaded: false,
-  currentView: null,
-  postCache: new Map(),
-  noteCache: new Map(),
-  theme: null,
-  menuOpen: false,
-};
+/* ------------------------------- 主题切换 -------------------------------- */
+// 初值由 <head> 里的守卫脚本设定，所以不会出现深色模式白闪。
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
 
-// --- GoatCounter is used for analytics (tracking script in HTML) ---
-// Page view count display is handled by Busuanzi JSONP (see fetchAndDisplayViewCount)
+function toggleTheme() {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {}
+}
 
-const $app = document.getElementById('app');
+/* ------------------------------- 移动端菜单 ------------------------------- */
+let menuOpen = false;
 
-// --- Reduced Motion Check ---
+function toggleMenu() {
+  menuOpen = !menuOpen;
+  const nav = document.querySelector('.nav-links');
+  const btn = document.querySelector('.menu-toggle');
+  if (nav) nav.classList.toggle('open', menuOpen);
+  if (btn) btn.setAttribute('aria-expanded', String(menuOpen));
+  document.body.style.overflow = menuOpen ? 'hidden' : '';
+}
+
+/* ----------------------------- 阅读进度条 -------------------------------- */
+function initProgressBar() {
+  const body = document.querySelector('.post-body');
+  if (!body) return; // 列表页与首页不显示
+
+  const bar = document.createElement('div');
+  bar.className = 'reading-progress';
+  bar.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(bar);
+
+  let ticking = false;
+  const update = () => {
+    const top = document.documentElement.scrollTop || document.body.scrollTop;
+    const h = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+    bar.style.width = h > 0 ? Math.min(100, (top / h) * 100) + '%' : '0%';
+  };
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        update();
+        ticking = false;
+      });
+    },
+    { passive: true },
+  );
+  update();
+}
+
+/* ------------------------------- 滚动揭示 --------------------------------- */
 function prefersReducedMotion() {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-// --- Router ---
-function parsePath() {
-  const parts = location.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
-  return { view: parts[0] || 'home', slug: parts[1] || null };
-}
-
-function navigate(path) {
-  if (location.pathname === path) {
-    handleRoute();
-    return;
-  }
-  history.pushState(null, '', path);
-  handleRoute();
-}
-
-// --- Helpers ---
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const [y, m, d] = dateStr.split('-');
-  return `${y}.${m}.${d}`;
-}
-
-function estimateReadingTime(md) {
-  const words = md.replace(/```[\s\S]*?```/g, '').split(/\s+/).length;
-  return Math.max(1, Math.ceil(words / 200));
-}
-
-// =============================================
-// THEME TOGGLE
-// =============================================
-function getSystemTheme() {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-function initTheme() {
-  const saved = localStorage.getItem('gyhmed-theme');
-  if (saved === 'dark' || saved === 'light') {
-    state.theme = saved;
-    document.documentElement.setAttribute('data-theme', saved);
-  }
-  // If no saved preference, rely on CSS @media (prefers-color-scheme)
-}
-
-function toggleTheme() {
-  const current = state.theme || getSystemTheme();
-  const next = current === 'dark' ? 'light' : 'dark';
-  state.theme = next;
-  document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('gyhmed-theme', next);
-}
-
-// =============================================
-// MOBILE MENU
-// =============================================
-function toggleMenu() {
-  state.menuOpen = !state.menuOpen;
-  const $nav = document.querySelector('.nav-links');
-  const $btn = document.querySelector('.menu-toggle');
-  if ($nav) $nav.classList.toggle('open', state.menuOpen);
-  if ($btn) $btn.setAttribute('aria-expanded', String(state.menuOpen));
-  // Prevent body scroll when menu open
-  document.body.style.overflow = state.menuOpen ? 'hidden' : '';
-}
-
-function closeMenu() {
-  if (!state.menuOpen) return;
-  state.menuOpen = false;
-  const $nav = document.querySelector('.nav-links');
-  const $btn = document.querySelector('.menu-toggle');
-  if ($nav) $nav.classList.remove('open');
-  if ($btn) $btn.setAttribute('aria-expanded', 'false');
-  document.body.style.overflow = '';
-}
-
-// =============================================
-// PAGE EXIT ANIMATION
-// =============================================
-function exitCurrentView() {
-  return new Promise(resolve => {
-    if (prefersReducedMotion()) { resolve(); return; }
-    const $view = $app.querySelector('.view');
-    if (!$view) { resolve(); return; }
-    $view.classList.remove('view');
-    $view.classList.add('view-exit');
-    $view.addEventListener('animationend', resolve, { once: true });
-    setTimeout(resolve, 220); // fallback
-  });
-}
-
-// =============================================
-// POST LOADING
-// =============================================
-async function loadPosts(force = false) {
-  if (state.postsLoaded && !force) return state.posts;
-  try {
-    const res = await fetch('/posts/index.json');
-    if (!res.ok) throw new Error(`Failed to load posts index (${res.status})`);
-    state.posts = await res.json();
-    state.posts.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    state.postsLoaded = true;
-    return state.posts;
-  } catch (err) {
-    console.warn('Could not load posts:', err.message);
-    state.posts = [];
-    state.postsLoaded = true;
-    return [];
-  }
-}
-
-async function loadPostContent(slug) {
-  if (state.postCache.has(slug)) return state.postCache.get(slug);
-  try {
-    const res = await fetch(`/posts/${encodeURIComponent(slug)}.md`);
-    if (!res.ok) throw new Error(`Post not found (${res.status})`);
-    const md = await res.text();
-    state.postCache.set(slug, md);
-    return md;
-  } catch (err) {
-    throw err;
-  }
-}
-
-function getPostMeta(slug) {
-  return state.posts.find(p => p.slug === slug) || null;
-}
-
-function getAdjacentPosts(slug) {
-  const idx = state.posts.findIndex(p => p.slug === slug);
-  if (idx === -1) return { prev: null, next: null };
-  return {
-    prev: idx < state.posts.length - 1 ? state.posts[idx + 1] : null,
-    next: idx > 0 ? state.posts[idx - 1] : null,
-  };
-}
-
-// =============================================
-// NOTES LOADING
-// =============================================
-async function loadNotes(force = false) {
-  if (state.notesLoaded && !force) return state.notes;
-  try {
-    const res = await fetch('/notes/index.json');
-    if (!res.ok) throw new Error(`Failed to load notes index (${res.status})`);
-    state.notes = await res.json();
-    state.notes.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    state.notesLoaded = true;
-    return state.notes;
-  } catch (err) {
-    console.warn('Could not load notes:', err.message);
-    state.notes = [];
-    state.notesLoaded = true;
-    return [];
-  }
-}
-
-async function loadNoteContent(slug) {
-  if (state.noteCache.has(slug)) return state.noteCache.get(slug);
-  try {
-    const res = await fetch(`/notes/${encodeURIComponent(slug)}.md`);
-    if (!res.ok) throw new Error(`Note not found (${res.status})`);
-    const md = await res.text();
-    state.noteCache.set(slug, md);
-    return md;
-  } catch (err) {
-    throw err;
-  }
-}
-
-function getNoteMeta(slug) {
-  return state.notes.find(n => n.slug === slug) || null;
-}
-
-function getAdjacentNotes(slug) {
-  const idx = state.notes.findIndex(n => n.slug === slug);
-  if (idx === -1) return { prev: null, next: null };
-  return {
-    prev: idx < state.notes.length - 1 ? state.notes[idx + 1] : null,
-    next: idx > 0 ? state.notes[idx - 1] : null,
-  };
-}
-
-// =============================================
-// READING PROGRESS BAR
-// =============================================
-let $progressBar = null;
-
-function initProgressBar() {
-  $progressBar = document.createElement('div');
-  $progressBar.className = 'reading-progress';
-  $progressBar.setAttribute('aria-hidden', 'true');
-  document.body.appendChild($progressBar);
-
-  let ticking = false;
-  window.addEventListener('scroll', () => {
-    if (ticking) return;
-    ticking = true;
-    requestAnimationFrame(() => {
-      updateProgressBar();
-      ticking = false;
-    });
-  }, { passive: true });
-}
-
-function updateProgressBar() {
-  if (!$progressBar || (state.currentView !== 'post' && state.currentView !== 'note')) {
-    if ($progressBar) $progressBar.style.width = '0%';
-    return;
-  }
-  const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
-  const scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-  if (scrollHeight <= 0) {
-    $progressBar.style.width = '0%';
-    return;
-  }
-  const pct = Math.min(100, (scrollTop / scrollHeight) * 100);
-  $progressBar.style.width = pct + '%';
-}
-
-function showProgressBar(show) {
-  if (!$progressBar) return;
-  $progressBar.style.display = show ? '' : 'none';
-  if (!show) $progressBar.style.width = '0%';
-}
-
-// =============================================
-// SCROLL REVEAL (Intersection Observer)
-// =============================================
-let revealObserver = null;
-
 function initScrollReveal() {
   if (prefersReducedMotion()) return;
-  if (revealObserver) revealObserver.disconnect();
-
-  revealObserver = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('visible');
-        revealObserver.unobserve(entry.target);
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          e.target.classList.add('visible');
+          observer.unobserve(e.target);
+        }
       }
+    },
+    { threshold: 0.1, rootMargin: '0px 0px -40px 0px' },
+  );
+  document
+    .querySelectorAll('.post-item, .section-heading, .about-page .bio p, .about-brand')
+    .forEach((el, i) => {
+      el.classList.add('reveal');
+      if (el.classList.contains('post-item')) {
+        el.style.transitionDelay = Math.min(i * 60, 300) + 'ms';
+      }
+      observer.observe(el);
     });
-  }, {
-    threshold: 0.1,
-    rootMargin: '0px 0px -40px 0px',
-  });
 }
 
-function observeRevealElements() {
-  if (prefersReducedMotion() || !revealObserver) return;
-  const selectors = '.post-item, .section-heading, .about-page .bio p, .about-brand';
-  document.querySelectorAll(selectors).forEach((el, i) => {
-    el.classList.add('reveal');
-    if (el.classList.contains('post-item')) {
-      el.style.transitionDelay = Math.min(i * 60, 300) + 'ms';
-    }
-    revealObserver.observe(el);
-  });
-}
-
-// =============================================
-// CODE COPY BUTTONS
-// =============================================
+/* ------------------------------ 代码复制按钮 ------------------------------ */
 function injectCopyButtons() {
-  document.querySelectorAll('.post-body pre').forEach(pre => {
+  document.querySelectorAll('.post-body pre').forEach((pre) => {
     if (pre.querySelector('.code-copy-btn')) return;
-
     const btn = document.createElement('button');
     btn.className = 'code-copy-btn';
+    btn.type = 'button';
     btn.setAttribute('aria-label', 'Copy code');
     btn.setAttribute('title', 'Copy code');
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    const COPY_ICON =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    btn.innerHTML = COPY_ICON;
+    pre.style.position = 'relative';
+    pre.appendChild(btn);
 
     btn.addEventListener('click', async () => {
-      const code = pre.querySelector('code')?.textContent || pre.textContent;
+      const code = pre.querySelector('code') ? pre.querySelector('code').textContent : pre.textContent;
       try {
         await navigator.clipboard.writeText(code);
-        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+        btn.innerHTML =
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
         btn.classList.add('copied');
         setTimeout(() => {
-          btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+          btn.innerHTML = COPY_ICON;
           btn.classList.remove('copied');
         }, 2000);
       } catch {
         btn.textContent = '!';
       }
     });
-
-    pre.style.position = 'relative';
-    pre.appendChild(btn);
   });
 }
 
-// =============================================
-// IMAGE LIGHTBOX
-// =============================================
+/* --------------------------------- 灯箱 ---------------------------------- */
 function initLightbox() {
-  document.querySelectorAll('.post-body img').forEach(img => {
-    if (img.closest('a')) return; // Skip linked images
+  document.querySelectorAll('.post-body img').forEach((img) => {
+    if (img.closest('a')) return;
     img.style.cursor = 'zoom-in';
-    img.addEventListener('click', () => openLightbox(img));
-  });
-}
+    img.addEventListener('click', () => {
+      const overlay = document.createElement('div');
+      overlay.className = 'lightbox-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-label', 'Image preview');
 
-function openLightbox(img) {
-  const overlay = document.createElement('div');
-  overlay.className = 'lightbox-overlay';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-label', 'Image preview');
+      const close = document.createElement('button');
+      close.className = 'lightbox-close';
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close preview');
+      close.innerHTML = '&times;';
 
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'lightbox-close';
-  closeBtn.setAttribute('aria-label', 'Close preview');
-  closeBtn.innerHTML = '&times;';
+      const clone = img.cloneNode();
+      clone.style.cursor = 'default';
+      overlay.append(close, clone);
+      document.body.append(overlay);
+      document.body.style.overflow = 'hidden';
 
-  const clone = img.cloneNode();
-  clone.style.cursor = 'default';
-
-  overlay.appendChild(closeBtn);
-  overlay.appendChild(clone);
-  document.body.appendChild(overlay);
-  document.body.style.overflow = 'hidden';
-
-  function close() {
-    document.body.style.overflow = '';
-    overlay.remove();
-  }
-
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay || e.target === closeBtn) close();
-  });
-  closeBtn.addEventListener('click', close);
-
-  document.addEventListener('keydown', function handler(e) {
-    if (e.key === 'Escape') {
-      close();
-      document.removeEventListener('keydown', handler);
-    }
-  });
-}
-
-// =============================================
-// TABLE OF CONTENTS (TOC) + SCROLL SPY
-// =============================================
-let tocSpyObserver = null;
-
-function generateTOC() {
-  const headings = document.querySelectorAll('.post-body h2, .post-body h3');
-  if (headings.length < 2) return; // Skip TOC if too few headings
-
-  const $tocAside = document.querySelector('.toc-aside');
-  if (!$tocAside) return;
-
-  let html = '<p class="toc-heading">On this page</p><ul class="toc-list">';
-  headings.forEach((h, i) => {
-    const id = `heading-${i}`;
-    h.id = id;
-    const level = h.tagName.toLowerCase();
-    const cls = level === 'h3' ? ' toc-h3' : '';
-    html += `<li><a href="#${id}" class="${cls}" data-toc-target="${id}">${h.textContent}</a></li>`;
-  });
-  html += '</ul>';
-
-  $tocAside.innerHTML = `<nav aria-label="Table of contents">${html}</nav>`;
-
-  // Scroll spy
-  initTocScrollSpy(headings);
-}
-
-function initTocScrollSpy(headings) {
-  if (tocSpyObserver) tocSpyObserver.disconnect();
-
-  tocSpyObserver = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      const link = document.querySelector(`.toc-list a[data-toc-target="${entry.target.id}"]`);
-      if (!link) return;
-      if (entry.isIntersecting) {
-        document.querySelectorAll('.toc-list a').forEach(a => a.classList.remove('active'));
-        link.classList.add('active');
-      }
+      const dismiss = () => {
+        document.body.style.overflow = '';
+        overlay.remove();
+        document.removeEventListener('keydown', onKey);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') dismiss();
+      };
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay || e.target === close) dismiss();
+      });
+      close.addEventListener('click', dismiss);
+      document.addEventListener('keydown', onKey);
     });
-  }, {
-    rootMargin: '-80px 0px -70% 0px',
-    threshold: 0,
-  });
-
-  headings.forEach(h => tocSpyObserver.observe(h));
-}
-
-// =============================================
-// SYNTAX HIGHLIGHTING (highlight.js)
-// =============================================
-function applySyntaxHighlight() {
-  if (typeof hljs !== 'undefined') {
-    document.querySelectorAll('.post-body pre code').forEach(block => {
-      hljs.highlightElement(block);
-    });
-  }
-}
-
-// =============================================
-// JSON-LD STRUCTURED DATA
-// =============================================
-function injectJsonLd(data) {
-  let existing = document.querySelector('script[type="application/ld+json"]');
-  if (existing) existing.remove();
-  if (!data) return;
-
-  const script = document.createElement('script');
-  script.type = 'application/ld+json';
-  script.textContent = JSON.stringify(data);
-  document.head.appendChild(script);
-}
-
-function setSiteJsonLd() {
-  injectJsonLd({
-    '@context': 'https://schema.org',
-    '@type': 'WebSite',
-    name: 'GyhMed',
-    url: 'https://gyhmed.com',
-    description: 'Personal blog by GyhMed — writings on medicine, technology, and life.',
   });
 }
 
-function setPostJsonLd(meta, readingTime) {
-  if (!meta) return;
-  injectJsonLd({
-    '@context': 'https://schema.org',
-    '@type': 'BlogPosting',
-    headline: meta.title,
-    datePublished: meta.date,
-    author: { '@type': 'Person', name: 'GyhMed' },
-    url: `https://gyhmed.com/post/${meta.slug}`,
-    description: meta.excerpt || '',
-    keywords: (meta.tags || []).join(', '),
-    timeRequired: `PT${readingTime}M`,
+/* ------------------------------ TOC 滚动高亮 ------------------------------ */
+function initTocScrollSpy() {
+  const links = document.querySelectorAll('.toc-list a[data-toc-target]');
+  if (links.length < 2) return;
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        links.forEach((a) => a.classList.remove('active'));
+        const link = document.querySelector(`.toc-list a[data-toc-target="${entry.target.id}"]`);
+        if (link) link.classList.add('active');
+      }
+    },
+    { rootMargin: '-80px 0px -70% 0px', threshold: 0 },
+  );
+  links.forEach((a) => {
+    const target = document.getElementById(a.dataset.tocTarget);
+    if (target) observer.observe(target);
   });
 }
 
-function setNoteJsonLd(meta, readingTime) {
-  if (!meta) return;
-  injectJsonLd({
-    '@context': 'https://schema.org',
-    '@type': 'ScholarlyArticle',
-    headline: meta.title,
-    datePublished: meta.date,
-    author: { '@type': 'Person', name: 'GyhMed' },
-    url: `https://gyhmed.com/note/${meta.slug}`,
-    description: meta.excerpt || '',
-    keywords: (meta.tags || []).join(', '),
-    timeRequired: `PT${readingTime}M`,
-    isPartOf: { '@type': 'CollectionPage', name: 'GyhMed Notes' },
-  });
-}
-
-// =============================================
-// PAGE VIEW COUNTER (Busuanzi)
-// =============================================
-function fetchAndDisplayViewCount(path) {
-  const el = document.querySelector('.post-view-count');
-  if (!el) return;
-
-  const pageUrl = 'https://gyhmed.com' + path;
-  const ref = document.referrer || '';
-
-  // Step 1: Record the visit (tracking hit)
-  const hit = new Image();
-  hit.src = `//busuanzi.ibruce.info/busuanzi?jsonpCallback=hit&pageurl=${encodeURIComponent(pageUrl)}&referer=${encodeURIComponent(ref)}`;
-
-  // Step 2: After a short delay, fetch the updated count via JSONP
-  setTimeout(() => {
-    const cbName = '_bsz_cb_' + Date.now();
-    window[cbName] = function(data) {
-      try {
-        let count = 0;
-        if (data && typeof data === 'object') {
-          // Try various response structures
-          if (data.page && data.page.pv != null) count = +data.page.pv;
-          else if (data.page_pv != null) count = +data.page_pv;
-          else if (data.pv != null) count = +data.pv;
-        }
-        if (typeof data === 'number') count = data;
-
-        el.querySelector('.view-count-num').textContent = count;
-        el.style.display = '';
-      } catch {}
-
-      delete window[cbName];
-      const s = document.getElementById('busuanzi_cb');
-      if (s) s.remove();
-    };
-
-    const script = document.createElement('script');
-    script.id = 'busuanzi_cb';
-    script.src = `//busuanzi.ibruce.info/busuanzi?jsonpCallback=${cbName}&pageurl=${encodeURIComponent(pageUrl)}&referer=${encodeURIComponent(ref)}`;
-    script.onerror = () => {
-      delete window[cbName];
-      script.remove();
-    };
-    document.head.appendChild(script);
-  }, 800);
-}
-
-// =============================================
-// VIEW RENDERING
-// =============================================
-function renderLoading() {
-  $app.setAttribute('aria-busy', 'true');
-  $app.innerHTML = '<div class="view"><div class="state-loading">Loading…</div></div>';
-}
-
-function renderError(msg) {
-  $app.setAttribute('aria-busy', 'false');
-  $app.innerHTML = `<div class="view"><div class="state-error">${escapeHtml(msg)}</div></div>`;
-}
-
-function renderEmpty() {
-  $app.setAttribute('aria-busy', 'false');
-  $app.innerHTML = '<div class="view"><div class="state-empty">No posts yet. Check back soon.</div></div>';
-}
-
-// --- Home View ---
-function renderHomeView(posts) {
-  const recent = posts.slice(0, 5);
-  const postItems = recent.map((p, i) => renderPostItem(p, i)).join('');
-
-  $app.innerHTML = `
-    <div class="view">
-      <section class="hero" aria-labelledby="hero-heading">
-        <div class="container-wide">
-          <div class="hero-content">
-            <h1 id="hero-heading">
-              A quiet corner<br>
-              for <span class="highlight">thoughts</span>.
-            </h1>
-            <p class="subtitle">
-              Personal notes on medicine, technology, and the spaces between.
-              Written by GyhMed.
-            </p>
-            <div class="hero-meta">
-              <span>${posts.length} article${posts.length !== 1 ? 's' : ''}</span>
-              <span class="divider"></span>
-              <span>Est. 2026</span>
-            </div>
-          </div>
-          <div class="hero-decoration" aria-hidden="true"></div>
-        </div>
-      </section>
-
-      <section class="container-wide">
-        <h2 class="section-heading">Recent Writings</h2>
-        ${posts.length > 0
-          ? `<ul class="post-list">${postItems}</ul>`
-          : '<p style="color: var(--text-muted);">No posts published yet.</p>'
-        }
-        ${posts.length > 5
-          ? `<div style="margin-top: 1.5rem;"><a href="/blog" class="view-all-link">View all articles &rarr;</a></div>`
-          : ''
-        }
-      </section>
-    </div>
-  `;
-  onRenderComplete();
-}
-
-// --- Blog List View ---
-function renderBlogView(posts) {
-  const postItems = posts.map((p, i) => renderPostItem(p, i)).join('');
-
-  $app.innerHTML = `
-    <div class="view">
-      <div class="container-wide blog-header">
-        <h1>Blog</h1>
-        <p>All published articles.</p>
-        ${posts.length > 0
-          ? `<ul class="post-list">${postItems}</ul>`
-          : '<p style="color: var(--text-muted);">No posts published yet.</p>'
-        }
-      </div>
-    </div>
-  `;
-  onRenderComplete();
-}
-
-function renderPostItem(post, index) {
-  const tags = (post.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('');
-  return `
-    <li class="post-item">
-      <a href="/post/${encodeURIComponent(post.slug)}" aria-label="Read: ${escapeHtml(post.title)}">
-        <time class="post-date" datetime="${post.date || ''}">${formatDate(post.date)}</time>
-        <div>
-          <span class="post-title">${escapeHtml(post.title)}</span>
-          ${post.excerpt ? `<div class="post-excerpt">${escapeHtml(post.excerpt)}</div>` : ''}
-          ${tags ? `<div class="post-meta-footer">${tags}</div>` : ''}
-        </div>
-      </a>
-    </li>
-  `;
-}
-
-// --- Single Post View ---
-async function renderPostView(slug) {
-  const meta = getPostMeta(slug);
-  let md;
-  try {
-    md = await loadPostContent(slug);
-  } catch (err) {
-    renderError('Post not found.');
-    return;
-  }
-
-  const title = meta ? escapeHtml(meta.title) : 'Untitled';
-  const date = meta ? formatDate(meta.date) : '';
-  const dateIso = meta ? (meta.date || '') : '';
-  const tags = meta
-    ? (meta.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('')
-    : '';
-  const viewCountHtml = `<span class="post-view-count post-tag" style="display:none;">👀 <span class="view-count-num">0</span> 次</span>`;
-  const readingTime = estimateReadingTime(md);
-  const { prev, next } = getAdjacentPosts(slug);
-
-  let html;
-  try {
-    if (typeof marked !== 'undefined') {
-      html = marked.parse(md);
-    } else {
-      // Fallback: basic rendering
-      html = fallbackRender(md);
-    }
-  } catch (e) {
-    html = `<pre>${escapeHtml(md)}</pre>`;
-  }
-
-  // Build prev/next nav
-  let navHtml = '<nav class="post-nav" aria-label="Post navigation">';
-  if (prev) {
-    navHtml += `
-      <a href="/post/${encodeURIComponent(prev.slug)}" class="nav-prev">
-        <span class="nav-label">&larr; Previous</span>
-        <span class="nav-title">${escapeHtml(prev.title)}</span>
-      </a>`;
-  } else {
-    navHtml += `
-      <a href="/blog" class="nav-prev">
-        <span class="nav-label">&larr; Back to</span>
-        <span class="nav-title">All articles</span>
-      </a>`;
-  }
-  if (next) {
-    navHtml += `
-      <a href="/post/${encodeURIComponent(next.slug)}" class="nav-next">
-        <span class="nav-label">Next &rarr;</span>
-        <span class="nav-title">${escapeHtml(next.title)}</span>
-      </a>`;
-  }
-  navHtml += '</nav>';
-
-  $app.innerHTML = `
-    <article class="view post-page">
-      <div class="post-with-toc">
-        <div class="post-main">
-          <header class="post-header">
-            <div class="post-header-meta">
-              ${date ? `<time datetime="${dateIso}">${date}</time>` : ''}
-              ${date ? '<span class="meta-divider"></span>' : ''}
-              <span>${readingTime} min read</span>
-            </div>
-            <h1>${title}</h1>
-            ${tags ? `<div class="post-tags">${tags}${viewCountHtml}</div>` : `<div class="post-tags">${viewCountHtml}</div>`}
-          </header>
-          <div class="post-body">
-            ${html}
-          </div>
-          ${navHtml}
-        </div>
-        <aside class="toc-aside" aria-label="Table of contents"></aside>
-      </div>
-    </article>
-  `;
-
-  document.title = `${title} — GyhMed`;
-
-  // JSON-LD for this post
-  setPostJsonLd(meta, readingTime);
-
-  onRenderComplete();
-
-  // Fetch and display view count (async, non-blocking)
-  fetchAndDisplayViewCount(`/post/${slug}`);
-}
-
-// --- About View ---
-function renderAboutView() {
-  $app.innerHTML = `
-    <div class="view">
-      <div class="container">
-        <article class="about-page">
-          <h1>About</h1>
-          <p class="about-subtitle">A corner for thoughtful writing.</p>
-
-          <div class="about-brand">
-            <div class="about-avatar" aria-hidden="true">G</div>
-            <div class="about-brand-info">
-              <span class="about-brand-name">GyhMed</span>
-              <span class="about-brand-tagline">Writer &middot; Thinker &middot; Explorer</span>
-              <span class="about-brand-tagline">Contact: <a href="mailto:admin@gyhmed.com">admin@gyhmed.com</a></span>
-            </div>
-          </div>
-
-          <div class="bio">
-            <p>
-              Welcome to <strong>gyhmed.com</strong> — a personal space for
-              writing, reflection, and sharing ideas. This is where I collect
-              things I'm learning, thinking about, or simply want to remember.
-            </p>
-            <p>
-              The topics here span medicine, technology, and everyday life.
-              Each article is an honest attempt to put thoughts into words —
-              nothing more, nothing less.
-            </p>
-            <p>
-              If something here resonates with you, feel free to reach out.
-            </p>
-          </div>
-        </article>
-      </div>
-    </div>
-  `;
-  onRenderComplete();
-}
-
-// --- Notes List View ---
-function renderNotesView(notes) {
-  const noteItems = notes.map((n, i) => renderNoteItem(n, i)).join('');
-
-  $app.innerHTML = `
-    <div class="view">
-      <div class="container-wide blog-header">
-        <h1>Notes</h1>
-        <p>Reading notes and literature study logs.</p>
-        ${notes.length > 0
-          ? `<ul class="post-list">${noteItems}</ul>`
-          : '<p style="color: var(--text-muted);">No notes published yet.</p>'
-        }
-      </div>
-    </div>
-  `;
-  onRenderComplete();
-}
-
-function renderNoteItem(note, index) {
-  const tags = (note.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('');
-  const venueLabel = note.venue ? `${note.venue}'${note.year || ''}` : '';
-  return `
-    <li class="post-item">
-      <a href="/note/${encodeURIComponent(note.slug)}" aria-label="Read: ${escapeHtml(note.title)}">
-        <time class="post-date" datetime="${note.date || ''}">${venueLabel}</time>
-        <div>
-          <span class="post-title">${escapeHtml(note.title)}</span>
-          ${note.excerpt ? `<div class="post-excerpt">${escapeHtml(note.excerpt)}</div>` : ''}
-          ${tags ? `<div class="post-meta-footer">${tags}</div>` : ''}
-        </div>
-      </a>
-    </li>
-  `;
-}
-
-// --- Single Note View ---
-async function renderNoteView(slug) {
-  const meta = getNoteMeta(slug);
-  let md;
-  try {
-    md = await loadNoteContent(slug);
-  } catch (err) {
-    renderError('Note not found.');
-    return;
-  }
-
-  const title = meta ? escapeHtml(meta.title) : 'Untitled';
-  const venueYear = meta ? `${escapeHtml(meta.venue || '')}'${meta.year || ''}` : '';
-  const tags = meta
-    ? (meta.tags || []).map(t => `<span class="post-tag">${escapeHtml(t)}</span>`).join('')
-    : '';
-  const viewCountHtml = `<span class="post-view-count post-tag" style="display:none;">👀 <span class="view-count-num">0</span> 次</span>`;
-  const readingTime = estimateReadingTime(md);
-  const { prev, next } = getAdjacentNotes(slug);
-
-  let html;
-  try {
-    if (typeof marked !== 'undefined') {
-      html = marked.parse(md);
-    } else {
-      html = fallbackRender(md);
-    }
-  } catch (e) {
-    html = `<pre>${escapeHtml(md)}</pre>`;
-  }
-
-  // Build prev/next nav
-  let navHtml = '<nav class="post-nav" aria-label="Note navigation">';
-  if (prev) {
-    navHtml += `
-      <a href="/note/${encodeURIComponent(prev.slug)}" class="nav-prev">
-        <span class="nav-label">&larr; Previous</span>
-        <span class="nav-title">${escapeHtml(prev.title)}</span>
-      </a>`;
-  } else {
-    navHtml += `
-      <a href="/notes" class="nav-prev">
-        <span class="nav-label">&larr; Back to</span>
-        <span class="nav-title">All notes</span>
-      </a>`;
-  }
-  if (next) {
-    navHtml += `
-      <a href="/note/${encodeURIComponent(next.slug)}" class="nav-next">
-        <span class="nav-label">Next &rarr;</span>
-        <span class="nav-title">${escapeHtml(next.title)}</span>
-      </a>`;
-  }
-  navHtml += '</nav>';
-
-  $app.innerHTML = `
-    <article class="view post-page">
-      <div class="post-with-toc">
-        <div class="post-main">
-          <header class="post-header">
-            <div class="post-header-meta">
-              ${venueYear ? `<span>${venueYear}</span>` : ''}
-              ${venueYear ? '<span class="meta-divider"></span>' : ''}
-              <span>${readingTime} min read</span>
-            </div>
-            <h1>${title}</h1>
-            ${tags ? `<div class="post-tags">${tags}${viewCountHtml}</div>` : `<div class="post-tags">${viewCountHtml}</div>`}
-          </header>
-          <div class="post-body">
-            ${html}
-          </div>
-          ${navHtml}
-        </div>
-        <aside class="toc-aside" aria-label="Table of contents"></aside>
-      </div>
-    </article>
-  `;
-
-  document.title = `${title} — GyhMed`;
-
-  // JSON-LD for this note
-  setNoteJsonLd(meta, readingTime);
-
-  onRenderComplete();
-
-  // Fetch and display view count (async, non-blocking)
-  fetchAndDisplayViewCount(`/note/${slug}`);
-}
-
-// =============================================
-// MARKED.JS FALLBACK RENDERER
-// =============================================
-function fallbackRender(md) {
-  // Basic Markdown-to-HTML for when marked.js fails to load
-  let html = escapeHtml(md);
-
-  // Headings
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-  // Bold & italic
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-  // Code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-  // Horizontal rule
-  html = html.replace(/^---$/gm, '<hr>');
-
-  // Line breaks to paragraphs (simple)
-  html = html.replace(/\n\n/g, '</p><p>');
-  html = '<p>' + html + '</p>';
-
-  // Clean up empty paragraphs around block elements
-  html = html.replace(/<p>\s*(<h[1-6]>)/g, '$1');
-  html = html.replace(/(<\/h[1-6]>)\s*<\/p>/g, '$1');
-  html = html.replace(/<p>\s*(<hr>)\s*<\/p>/g, '$1');
-  html = html.replace(/<p>\s*<\/p>/g, '');
-
-  return html;
-}
-
-// =============================================
-// POST-RENDER HOOK
-// =============================================
-function onRenderComplete() {
-  $app.setAttribute('aria-busy', 'false');
-  initScrollReveal();
-  observeRevealElements();
-
-  // Post and note-specific enhancements
-  if (state.currentView === 'post' || state.currentView === 'note') {
-    showProgressBar(true);
-    injectCopyButtons();
-    initLightbox();
-    generateTOC();
-    applySyntaxHighlight();
-  } else {
-    showProgressBar(false);
-    if (state.currentView !== 'post' && state.currentView !== 'note') {
-      injectJsonLd(null); // Clear post/note JSON-LD
-    }
-  }
-}
-
-// =============================================
-// NAV ACTIVE STATE
-// =============================================
-function updateActiveNav(view) {
-  document.querySelectorAll('[data-nav]').forEach(el => {
-    const isActive = el.dataset.nav === view;
-    el.classList.toggle('active', isActive);
-    el.setAttribute('aria-current', isActive ? 'page' : 'false');
-  });
-}
-
-// =============================================
-// ROUTE HANDLER
-// =============================================
-async function handleRoute() {
-  const { view, slug } = parsePath();
-
-  // Prevent re-rendering the same view
-  if (state.currentView === view && !slug) return;
-
-  // Close mobile menu on navigation
-  closeMenu();
-
-  // Set document title
-  if (view === 'home') {
-    document.title = 'GyhMed — A quiet corner for thoughts';
-  } else if (view === 'notes') {
-    document.title = 'GyhMed — Notes';
-  } else {
-    document.title = `GyhMed — ${view.charAt(0).toUpperCase() + view.slice(1)}`;
-  }
-
-  updateActiveNav(view === 'post' ? 'blog' : view === 'note' ? 'notes' : view);
-
-  if (view === 'post' && !slug) {
-    navigate('/blog');
-    return;
-  }
-
-  if (view === 'note' && !slug) {
-    navigate('/notes');
-    return;
-  }
-
-  // Reset progress bar on navigation
-  showProgressBar(false);
-
-  // Exit animation before rendering new content
-  await exitCurrentView();
-
-  // Set current view
-  state.currentView = view;
-
-  renderLoading();
-
-  try {
-    switch (view) {
-      case 'home': {
-        const posts = await loadPosts();
-        renderHomeView(posts);
-        setSiteJsonLd();
-        break;
-      }
-      case 'blog': {
-        const posts = await loadPosts();
-        renderBlogView(posts);
-        setSiteJsonLd();
-        break;
-      }
-      case 'post': {
-        await loadPosts();
-        await renderPostView(slug);
-        break;
-      }
-      case 'notes': {
-        const notes = await loadNotes();
-        renderNotesView(notes);
-        setSiteJsonLd();
-        break;
-      }
-      case 'note': {
-        await loadNotes();
-        await renderNoteView(slug);
-        break;
-      }
-      case 'about':
-        renderAboutView();
-        setSiteJsonLd();
-        break;
-      default:
-        navigate('/');
-        return;
-    }
-
-    // Scroll to top after route change
-    window.scrollTo({ top: 0, behavior: 'instant' });
-  } catch (err) {
-    console.error('Render error:', err);
-    renderError('Something went wrong. Please try again.');
-  }
-}
-
-// =============================================
-// INIT
-// =============================================
+/* ---------------------------------- init --------------------------------- */
 function init() {
-  // Theme
-  initTheme();
+  const themeBtn = document.querySelector('.theme-toggle');
+  if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+  const menuBtn = document.querySelector('.menu-toggle');
+  if (menuBtn) menuBtn.addEventListener('click', toggleMenu);
 
-  // Listen for system theme changes (hljs sync handled in HTML inline script)
-  // No action needed here — CSS @media handles variable switching,
-  // and the HTML MutationObserver + matchMedia listener handles hljs.
-
-  // Router
-  window.addEventListener('popstate', handleRoute);
-
-  if (location.hash.startsWith('#/')) {
-    history.replaceState(null, '', location.hash.replace(/^#/, '') || '/');
-  }
-
-  // Delegated click handler
-  document.addEventListener('click', event => {
-    const link = event.target.closest('a');
-    if (!link || link.target || link.origin !== location.origin) return;
-
-    // Allow hash-only anchor links (TOC, in-page navigation)
-    if (link.hash && link.pathname === location.pathname) {
-      // Don't prevent default — let browser scroll to anchor
-      return;
-    }
-
-    event.preventDefault();
-    navigate(link.pathname);
-  });
-
-  // Initialize reading progress bar
   initProgressBar();
-
-  // Start routing
-  handleRoute();
+  initScrollReveal();
+  injectCopyButtons();
+  initLightbox();
+  initTocScrollSpy();
 }
 
 if (document.readyState === 'loading') {
